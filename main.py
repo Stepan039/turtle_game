@@ -16,6 +16,7 @@ T_WIDTH = T_HEIGHT = 50
 all_sprites = pygame.sprite.Group()
 tile_sprites = pygame.sprite.Group()
 solid_sprites = pygame.sprite.Group()
+win_sprites = pygame.sprite.Group()
 mob_sprites = pygame.sprite.Group()
 
 # -------- FUNCTIONS ---------
@@ -75,6 +76,16 @@ class Tile(pygame.sprite.Sprite):
         self.rect = self.image.get_rect().move(x * T_WIDTH, y * T_HEIGHT)
 
 
+class WinTile(Tile):
+    def __init__(self, texture='empty', x=0, y=0, passable=False):
+        super().__init__(texture, x, y, passable)
+        self.add(win_sprites)
+
+    def check_win(self):
+        if pygame.sprite.collide_rect(self, turtle):
+            return True
+        return False
+
 class Map:
     def __init__(self, map_file):
         self.map_list = load_level(map_file)
@@ -89,6 +100,10 @@ class Map:
                     tile = Tile('empty', x, y, True)
                 elif self.map_list[y][x] == '#':
                     tile = Tile('wall', x, y)
+                elif self.map_list[y][x] == '%':
+                    tile = Tile('coral', x, y)
+                elif self.map_list[y][x] == '-':
+                    tile = WinTile('empty', x, y)
                 elif self.map_list[y][x] == '@':
                     tile = Tile('empty', x, y, True)
                     turtle_obj = Turtle(x, y, turtle_anim)
@@ -108,7 +123,8 @@ class Mob(pygame.sprite.Sprite):
         self.rect = self.image.get_rect().move(x * T_WIDTH, y * T_HEIGHT)
         self.x_speed = 0
         self.y_speed = 0
-        self.gravity = 5
+        self.gravity = 1
+        self.countdown = 2
 
     def cut_sheet(self, name, sheet, columns, rows):
         if 'err' not in self.sheets.keys():
@@ -124,9 +140,13 @@ class Mob(pygame.sprite.Sprite):
                     frame_location, self.rect.size)))
 
     def update(self):
-        self.frame = (self.frame + 1) % len(self.sheets[self.sheet])
-        self.image = self.sheets[self.sheet][self.frame]
-        self.rect = self.image.get_rect().move(self.rect.x, self.rect.y)
+        if self.countdown == 2:
+            self.frame = (self.frame + 1) % len(self.sheets[self.sheet])
+            self.image = self.sheets[self.sheet][self.frame]
+            self.rect = self.image.get_rect().move(self.rect.x, self.rect.y)
+            self.countdown = 0
+        else:
+            self.countdown += 1
 
 
 class Turtle(Mob):
@@ -136,6 +156,7 @@ class Turtle(Mob):
         self.direction = 'run_left'
         self.falling = False
         self.jumping = False
+        self.moving = False
 
     def run_right(self):
         self.direction = 'run_right'
@@ -151,7 +172,7 @@ class Turtle(Mob):
         if self.falling or self.jumping:
             return
         self.jumping = True
-        self.y_speed = -10
+        self.y_speed = -18
 
     def fall(self):
         self.jumping = False
@@ -162,18 +183,20 @@ class Turtle(Mob):
     def hook_keyboard(self):
         keys = pygame.key.get_pressed()
         self.x_speed = 0
-        self.y_speed = 0
+        self.moving = False
         if keys[pygame.K_a]:
+            self.moving = True
             self.run_left()
         elif keys[pygame.K_d]:
+            self.moving = True
             self.run_right()
         if keys[pygame.K_SPACE]:
+            self.moving = True
             self.jump()
 
     def is_collide_flat(self):
         if pygame.sprite.spritecollideany(self, solid_sprites):
             target = pygame.sprite.spritecollide(self, solid_sprites, False)[0]
-            pygame.draw.rect(screen, pygame.color.Color(0, 255, 0), target.rect)
             if self.rect.left < target.rect.right and self.x_speed < 0:
                 self.rect.left = target.rect.right
                 self.x_speed = 0
@@ -184,36 +207,37 @@ class Turtle(Mob):
                 print('leftx')
 
     def is_collide_updown(self):
-        if pygame.sprite.spritecollideany(self, solid_sprites):
-            target = pygame.sprite.spritecollide(self, solid_sprites, False)[0]
-            pygame.draw.rect(screen, pygame.color.Color(0, 255, 0), target.rect)
-            if self.rect.top < target.rect.bottom and self.y_speed < 0:
-                print(self.y_speed)
-                self.rect.top = target.rect.bottom
-                self.fall()
-            elif self.rect.bottom > target.rect.top and self.y_speed >= 0:
-                self.rect.bottom = target.rect.top
-                self.falling = False
-                self.y_speed = 0
-                print('s1')
-            else:
-                self.falling = False
-                self.y_speed = 0
+        if not pygame.sprite.spritecollideany(self, solid_sprites):
+            return
+        target = pygame.sprite.spritecollide(self, solid_sprites, False)[0]
+        if win_sprites in target.groups():
+            return
+        pygame.draw.rect(screen, pygame.color.Color(0, 255, 0), target.rect)
+        if self.rect.top < target.rect.bottom and self.y_speed < 0:
+            print(self.y_speed)
+            self.rect.top = target.rect.bottom
+            self.fall()
+        elif self.rect.bottom > target.rect.top and self.y_speed >= 0 and not self.jumping and self.falling:
+            self.rect.bottom = target.rect.top
+            self.falling = False
+            self.y_speed = 0
+            print('s1')
 
     def will_fall(self):
-        self.rect = self.rect.move(0, self.rect.h)
+        self.rect = self.rect.move(0, 2)
         if pygame.sprite.spritecollideany(self, solid_sprites):
             target = pygame.sprite.spritecollide(self, solid_sprites, False)[0]
             if self.rect.bottom > target.rect.top:
-                self.rect = self.rect.move(0, -self.rect.h)
+                self.rect = self.rect.move(0, -2)
                 return False
         else:
-            self.rect = self.rect.move(0, -self.rect.h)
+            self.rect = self.rect.move(0, -2)
             return True
 
     def apply_movement(self):
-        if self.will_fall() and not self.jumping:
+        if self.will_fall() and not self.falling and not self.jumping:
             self.falling = True
+            print("willfall")
         if self.direction == 'run_right':
             self.rect = self.rect.move(self.x_speed, 0)
             self.is_collide_flat()
@@ -222,10 +246,13 @@ class Turtle(Mob):
             self.is_collide_flat()
         if self.jumping:
             self.y_speed += self.gravity
+            print("jump")
             if self.y_speed >= 0:
                 self.jumping = False
                 self.falling = True
                 self.apply_movement()
+                print("j-")
+                return
             self.rect = self.rect.move(0, self.y_speed)
             self.is_collide_updown()
         elif self.falling:
@@ -237,22 +264,35 @@ class Turtle(Mob):
         self.apply_movement()
         if self.falling:
             print("fa")
-        super().update()
-        pygame.draw.rect(screen, pygame.color.Color(255, 0, 0), self.rect)
+        if self.jumping:
+            print("jp")
+        if self.falling or self.jumping or self.moving:
+            super().update()
+        # pygame.draw.rect(screen, pygame.color.Color(255, 0, 0), self.rect)
+
+
+class Bubble:
+    pass
+
+
+class Enemy:
+    pass
+
+
 # ----------- INIT -----------
 
 
 pygame.init()
 screen = pygame.display.set_mode(SIZE)
 
-
 # ---------- ASSETS ----------
 
 assets = {
     'empty': load_image('empty.png'),
-    'wall': load_image('asset_type5.png'),
-    'err': load_image('err.png')
-    # 'bg': load_image('background.png')
+    'wall': load_image('sand_type1.png'),
+    'coral': load_image('sand_type2.png'),
+    'err': load_image('err.png'),
+    'bg': pygame.transform.scale(load_image('bg.jpg'), (1200, 600))
 }
 
 turtle_anim = [
@@ -261,28 +301,43 @@ turtle_anim = [
 ]
 
 maps = {
-    'test': 'level0.txt',
+    '1': 'level0.txt',
+    '2': 'level1.txt'
 }
 
 
 # ------- GAME PROCESS -------
 
+map_name = '1'
+turtle, *map_size = Map(maps[map_name]).generate_map()
 
-turtle, *map_size = Map(maps['test']).generate_map()
 camera = Camera()
-# a = AnimatedSprite(load_image("aaa.png"), 3, 1, WIDTH // 2, HEIGHT // 2)
+
 running = True
 while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
     screen.fill((0, 0, 0))
+    screen.blit(assets['bg'], (0, 0))
     turtle.hook_keyboard()
     turtle.update()
+    all_sprites.draw(screen)
     camera.update(turtle)
     for sprite in all_sprites:
         camera.apply(sprite)
-    # a.update()
-    all_sprites.draw(screen)
+    for sprite in win_sprites:
+        if sprite.check_win():
+            if map_name == '1':
+                map_name = '2'
+                all_sprites = pygame.sprite.Group()
+                tile_sprites = pygame.sprite.Group()
+                solid_sprites = pygame.sprite.Group()
+                win_sprites = pygame.sprite.Group()
+                mob_sprites = pygame.sprite.Group()
+                turtle, *map_size = Map(maps[map_name]).generate_map()
+                camera = Camera()
+            else:
+                sys.exit()
     CLOCK.tick(30)
     pygame.display.flip()
